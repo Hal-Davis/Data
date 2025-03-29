@@ -1,0 +1,6 @@
+@StockDataApi_HostAddress = http://localhost:5002
+
+GET {{StockDataApi_HostAddress}}/StockData/
+Accept: application/json
+
+###
