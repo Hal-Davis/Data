@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using System.Dynamic;
+
+
 namespace StockDataApi.Controllers
 {
     [Route("api/[controller]")]
@@ -15,7 +17,7 @@ namespace StockDataApi.Controllers
     {
         private readonly StockDataContext _context;
         private readonly ILogger<StockDataController> _logger;
-
+         
         public StockDataController(StockDataContext context, ILogger<StockDataController> logger)
         {
             _context = context;
@@ -221,36 +223,36 @@ namespace StockDataApi.Controllers
             return Ok(score);
         }
 
-            [HttpGet("atr/{symbol}/{days}")]
-    public async Task<ActionResult<double>> GetATR(string symbol, int days)
-    {
-        var stockPrices = await _context.StockData
-            .Where(s => s.Symbol == symbol)
-            .OrderByDescending(s => s.Date)
-            .Take(days + 1)
-            .Select(s => new { s.HighPrice, s.LowPrice, s.ClosePrice })
-            .ToListAsync();
-
-        if (stockPrices.Count < days) return NotFound("Not enough data");
-        double atr = CalculateATR(stockPrices);
-        return Ok(atr);
-    }
-
-    private double CalculateATR(dynamic prices)
-    {
-        double totalTR = 0;
-
-        for (int i = 1; i < prices.Count; i++)
+        [HttpGet("atr/{symbol}/{days}")]
+        public async Task<ActionResult<double>> GetATR(string symbol, int days)
         {
-            double highLow = prices[i].HighPrice - prices[i].LowPrice;
-            double highPrevClose = Math.Abs(prices[i].HighPrice - prices[i - 1].ClosePrice);
-            double lowPrevClose = Math.Abs(prices[i].LowPrice - prices[i - 1].ClosePrice);
+            var stockPrices = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderByDescending(s => s.Date)
+                .Take(days + 1)
+                .Select(s => new { s.HighPrice, s.LowPrice, s.ClosePrice })
+                .ToListAsync();
 
-            double trueRange = Math.Max(highLow, Math.Max(highPrevClose, lowPrevClose));
-            totalTR += trueRange;
+            if (stockPrices.Count < days) return NotFound("Not enough data");
+            double atr = CalculateATR(stockPrices);
+            return Ok(atr);
         }
 
-        return totalTR / prices.Count;
+        private double CalculateATR(dynamic prices)
+        {
+            double totalTR = 0;
+
+            for (int i = 1; i < prices.Count; i++)
+            {
+                double highLow = prices[i].HighPrice - prices[i].LowPrice;
+                double highPrevClose = Math.Abs(prices[i].HighPrice - prices[i - 1].ClosePrice);
+                double lowPrevClose = Math.Abs(prices[i].LowPrice - prices[i - 1].ClosePrice);
+
+                double trueRange = Math.Max(highLow, Math.Max(highPrevClose, lowPrevClose));
+                totalTR += trueRange;
+            }
+
+            return totalTR / prices.Count;
         }
         [HttpGet("signal-accuracy/{symbol}/{days}")]
         public async Task<ActionResult<double>> GetSignalAccuracy(string symbol, int days)
@@ -306,6 +308,53 @@ namespace StockDataApi.Controllers
 
             return Ok(new { UpperBand = upperBand, LowerBand = lowerBand, SMA = sma });
         }
+
+        [HttpGet("bollinger-array/{symbol}/{days}")]
+        public async Task<ActionResult<IEnumerable<object>>> GetBollingerBandsArray(string symbol, int days)
+        {
+            // Fetch stock data for the given symbol and order by date
+            var stockData = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderBy(s => s.Date) // Sort in ascending order for correct calculations
+                .ToListAsync();
+
+            if (stockData.Count < days)
+            {
+                return NotFound("Not enough data to calculate Bollinger Bands.");
+            }
+
+            // List to hold the results
+            var bollingerBandsArray = new List<object>();
+
+            // Loop through the stock data with a sliding window of `days`
+            for (int i = 0; i <= stockData.Count - days; i++)
+            {
+                // Take the relevant subset of stock prices for the sliding window
+                var subset = stockData.Skip(i).Take(days).ToList();
+
+                // Calculate SMA (Simple Moving Average)
+                double sma = subset.Average(s => s.ClosePrice ?? 0);
+
+                // Calculate standard deviation
+                double stdDev = Math.Sqrt(subset.Sum(s => Math.Pow((s.ClosePrice ?? 0) - sma, 2)) / days);
+
+                // Calculate upper and lower bands
+                double upperBand = sma + (2 * stdDev);
+                double lowerBand = sma - (2 * stdDev);
+
+                // Add the Bollinger Bands for the last day in the window
+                bollingerBandsArray.Add(new
+                {
+                    Date = subset.Last().Date,
+                    UpperBand = upperBand,
+                    LowerBand = lowerBand,
+                    SMA = sma
+                });
+            }
+
+            return Ok(bollingerBandsArray);
+        }
+
         [HttpGet("macd/{symbol}")]
         public async Task<ActionResult<object>> GetMACD(string symbol)
         {
@@ -378,7 +427,167 @@ namespace StockDataApi.Controllers
                 newsArticles = sentiment.NewsArticles
                     .Split(new string[] { "; " }, StringSplitOptions.RemoveEmptyEntries)
             });
-        }  
+        }
+        [HttpGet("ema-array/{symbol}/{days}")]
+        public async Task<ActionResult<IEnumerable<double>>> GetEMAArray(string symbol, int days)
+        {
+            var stockPrices = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderByDescending(s => s.Date)
+                .Select(s => s.ClosePrice ?? 0)
+                .ToListAsync();
 
+            if (stockPrices.Count < days) return NotFound("Not enough data");
+
+            var emaArray = new List<double>();
+            double multiplier = 2.0 / (days + 1);
+            double ema = stockPrices.First();
+
+            emaArray.Add(ema); // Seed with initial EMA
+            foreach (var price in stockPrices.Skip(1))
+            {
+                ema = (price - ema) * multiplier + ema;
+                emaArray.Add(ema);
+            }
+
+            return Ok(emaArray);
+        }
+
+    
+        [HttpGet("sma-array/{symbol}/{days}")]
+        public async Task<ActionResult<IEnumerable<double>>> GetSMAArray(string symbol, int days)
+        {
+            var stockPrices = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderByDescending(s => s.Date)
+                .Select(s => s.ClosePrice ?? 0) // Handle null values
+                .ToListAsync();
+
+            if (stockPrices.Count < days) return NotFound("Not enough data");
+
+            var smaArray = new List<double>();
+            for (int i = 0; i <= stockPrices.Count - days; i++)
+            {
+                var window = stockPrices.Skip(i).Take(days);
+                smaArray.Add(window.Take(i).Average());
+            }
+
+            return Ok(smaArray);
+        }
+
+        [HttpGet("fibonacci/{symbol}/{high}/{low}")]
+        public IActionResult CalculateFibonacciLevels(string symbol, double high, double low)
+        {
+                        var levels = new List<object>
+            {
+            new { Level = "0%", Value = high },
+            new { Level = "23.6%", Value = high - 0.236 * (high - low) },
+            new { Level = "38.2%", Value = high - 0.382 * (high - low) },
+            new { Level = "50%", Value = (high + low) / 2 },
+            new { Level = "61.8%", Value = low + 0.618 * (high - low) },
+            new { Level = "100%", Value = low }
+            };
+            return Ok(levels);
+        }
+       
+        // ✅ Calculate Beta
+        [HttpGet("beta/{symbol}")]
+        public async Task<ActionResult<double>> CalculateBeta(string symbol)
+        {
+            var stockReturns = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderByDescending(s => s.Date)
+                .Select(s => s.Prediction - (s.ClosePrice ?? 0)) // Example logic
+                .ToListAsync();
+
+            var marketReturns = await _context.StockStatistics
+                .OrderByDescending(s => s.Timestamp)
+                .Select(s => s.R2) // Assuming R2 represents market returns
+                .ToListAsync();
+
+            if (stockReturns.Count < 2 || marketReturns.Count < 2)
+                return NotFound("Not enough data to calculate Beta.");
+
+            double avgStockReturn = Convert.ToDouble(stockReturns.Average());
+            double avgMarketReturn = marketReturns.Average();
+
+            double covariance = stockReturns.Zip(marketReturns, (stock, market) => (stock - avgStockReturn) * (market - avgMarketReturn))
+                                            .Sum() ?? 0 / (stockReturns.Count - 1);
+
+            double marketVariance = marketReturns.Sum(market => Math.Pow(market - avgMarketReturn, 2)) / (marketReturns.Count - 1);
+
+            double beta = covariance / marketVariance;
+            return Ok(beta);
+        }
+        [HttpGet("stock-data-indicators/{symbol}/{days}")]
+        public async Task<ActionResult<object>> GetStockDataWithIndicators(string symbol, int days)
+        {
+            var stockData = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderBy(s => s.Date)
+                .Select(s => new { s.Date, ClosePrice = s.ClosePrice ?? 0 })
+                .ToListAsync();
+
+            if (stockData.Count < days)
+                return NotFound("Not enough data");
+
+            //var smaArray = new List<double>();
+            //for (int i = 0; i <= stockData.Count - days; i++)
+            //{
+            //    var window = stockData.Skip(i).Take(days);
+            //    smaArray.Add(window.Average(s => s.ClosePrice));
+            //}
+            // Calculate SMA
+            var smaArray = new List<double?>();
+            for (int i = 0; i < stockData.Count; i++)
+            {
+                if (i >= days - 1)
+                {
+                    var window = stockData.Skip(i - days + 1).Take(days);
+                    smaArray.Add(window.Average(s => s.ClosePrice));
+                }
+                else
+                {
+                    smaArray.Add(null);
+                }
+            }
+
+            // Calculate EMA
+            var emaArray = new List<double>();
+            double multiplier = 2.0 / (days + 1);
+            double ema = stockData.First().ClosePrice;
+            emaArray.Add(ema); // Seed with initial EMA
+            foreach (var price in stockData.Skip(1).Select(s => s.ClosePrice))
+            {
+                ema = (price - ema) * multiplier + ema;
+                emaArray.Add(ema);
+            }
+
+            // Prepare the result
+            var result = stockData.Select((s, index) => new
+            {
+                s.Date,
+                SMA = smaArray[index],
+                EMA = emaArray[index]
+            }).ToList();
+
+            return Ok(result);
+        }
+
+        [HttpGet("vix/{symbol}")]
+        public async Task<ActionResult<double>> GetVolatilityIndex(string symbol)
+        {
+            var stockData = await _context.StockData
+                .Where(s => s.Symbol == symbol)
+                .OrderByDescending(s => s.Date)
+                .Take(30)
+                .Select(s => s.ClosePrice ?? 0)
+                .ToListAsync();
+
+            if (!stockData.Any()) return NotFound("No data available");
+
+            double vix = Math.Sqrt(stockData.Sum(price => Math.Pow(price - stockData.Average(), 2)) / stockData.Count);
+            return Ok(vix);
+        }
     }
 }
